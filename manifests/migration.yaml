@@ -1,0 +1,9 @@
+apiVersion: forklift.konveyor.io/v1beta1
+kind: Migration
+metadata:
+  generateName: windows-test-perms-ops-
+  namespace: openshift-mtv
+spec:
+  plan:
+    name: windows-test-perms
+    namespace: openshift-mtv
