@@ -190,6 +190,90 @@ oc delete rolebinding ops-migration-target -n virt-windows
 
 Revocation does not cancel an already-submitted migration: the controller continues under its own service account. Other RoleBindings, if present, can still grant access.
 
+### 3.7. Alternative: access to all migration plans
+
+**Scope:** all existing and future Plans in `openshift-mtv`, not every namespace in the cluster. This remains a start-and-monitor profile; it does not grant Plan creation, editing, deletion, or provider-secret access.
+
+Use [ops-migration-all-plans-rbac.yaml](manifests/ops-migration-all-plans-rbac.yaml) **instead of** the single-plan starter manifest in Step 3.3:
+
+```bash
+# Administrator: replace the existing starter Role's rules.
+oc apply -f manifests/ops-migration-all-plans-rbac.yaml
+oc get role ops-migration-starter -n openshift-mtv -o yaml
+```
+
+The alternative deliberately uses the **same Role and RoleBinding names** as the single-plan version, so it updates the existing grant rather than adding a second convention. The Plan rule becomes:
+
+```yaml
+- apiGroups: [forklift.konveyor.io]
+  resources: [plans]
+  verbs: [get, list, watch]
+```
+
+Removing `resourceNames` allows reads of any Plan; adding `list` and `watch` allows discovery and monitoring of all Plans in that namespace. Migration permissions stay `create, get, list, watch`: they were already namespace-wide. The original manifest never enforced single-plan-only submission (see Step 3.5).
+
+#### Grant access to each permitted destination namespace
+
+The target VM `create` check still applies independently for every plan. The existing target manifest covers only `virt-windows`. As administrator, inventory the plans and destinations first:
+
+```bash
+oc get plans.forklift.konveyor.io -n openshift-mtv \
+  -o custom-columns=PLAN:.metadata.name,TARGET_NAMESPACE:.spec.targetNamespace
+```
+
+For plans targeting `virt-windows`, retain the existing target RoleBinding:
+
+```bash
+oc apply -f manifests/ops-migration-target-rbac.yaml
+```
+
+For each additional approved destination, create the same target Role and RoleBinding there. For example, set `TARGET_NS` to an existing approved namespace and run:
+
+```bash
+TARGET_NS=virt-linux
+oc get namespace "$TARGET_NS"
+oc create role ops-migration-target --namespace="$TARGET_NS" \
+  --verb=create --resource=virtualmachines.kubevirt.io \
+  --dry-run=client -o yaml | oc apply -f -
+oc create rolebinding ops-migration-target --namespace="$TARGET_NS" \
+  --role=ops-migration-target --group=ops \
+  --dry-run=client -o yaml | oc apply -f -
+```
+
+Repeat for each approved destination. Do not automatically grant VM creation in every namespace: this permission also allows direct VM creation. Newly added Plans in `openshift-mtv` are readable immediately, but a new destination requires its own grant. Plans with different providers or options should each receive a server-side admission dry run; the real migration test in this guide covered only `windows-test-perms`.
+
+#### Verify as operator before starting another plan
+
+```bash
+oc --kubeconfig=operator.kubeconfig auth can-i list \
+  plans.forklift.konveyor.io -n openshift-mtv
+# Expected: yes after applying the alternative.
+oc --kubeconfig=operator.kubeconfig get plans.forklift.konveyor.io -n openshift-mtv
+oc --kubeconfig=operator.kubeconfig auth can-i create \
+  migrations.forklift.konveyor.io -n openshift-mtv
+# Expected: yes.
+oc --kubeconfig=operator.kubeconfig auth can-i create \
+  virtualmachines.kubevirt.io -n "$TARGET_NS"
+# Expected: yes for each explicitly granted target.
+```
+
+For another prepared Plan, create a copy of `manifests/migration.yaml`, replace `spec.plan.name` and the name prefix, and keep the correct plan namespace. Run `oc --kubeconfig=operator.kubeconfig create --dry-run=server -f <your-migration.yaml>` first. Only omit `--dry-run=server` when intentionally starting that migration.
+
+#### Plans in additional namespaces
+
+The RoleBinding above does not cover Plans outside `openshift-mtv`. For each approved plan namespace, deploy a copy of the all-plans manifest with **both** Role and RoleBinding `metadata.namespace` changed to that namespace, plus target grants for its approved destinations. This explicit namespace allowlist avoids cluster-wide access. Do not use `oc get plans -A` as a success criterion for namespaced grants: listing across all namespaces requires cluster-wide authorization.
+
+#### Return to named-plan read access
+
+```bash
+oc apply -f manifests/ops-migration-rbac.yaml
+```
+
+This restores the original Plan `resourceNames` restriction and removes Plan `list/watch` from this Role. It does not restrict Migration `create` to one plan, and it does not revoke target RoleBindings added in other namespaces; delete those bindings separately if no longer approved. Do not apply both starter variants together: whichever is applied last defines the shared Role's rules.
+
+This alternative is documented and its manifest is validated without persistence; it was **not applied to the live cluster** as part of this documentation update.
+
+
 
 ## 4. Verify admission without starting a migration
 
