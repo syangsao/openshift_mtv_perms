@@ -72,10 +72,95 @@ oc get group ops -o jsonpath='{.users}{"\n"}'
 
 ## 3. Grant namespaced migration access
 
+### 3.1. Confirm the identities, plan namespace, and destination
+
+Run the administrative commands using your cluster-admin kubeconfig. Commands containing `--kubeconfig=operator.kubeconfig` deliberately use the unprivileged user instead. Do not grant these Roles to a service account named `operator`: the subject here is the OpenShift **Group** `ops`, containing the human User `operator`.
+
 ```bash
+oc whoami
+oc get group ops -o jsonpath='{.users}{"\n"}'
+# Must include operator.
+oc get plans.forklift.konveyor.io windows-test-perms -n openshift-mtv \
+  -o jsonpath='{.metadata.namespace}{" -> "}{.spec.targetNamespace}{"\n"}'
+# openshift-mtv -> virt-windows
+oc get namespace openshift-mtv virt-windows
+```
+
+The namespaces and existing plan must already exist. If adapting this example, update the namespaces in **both** Role and RoleBinding metadata, the plan `resourceNames`, and the Migration manifest. The source provider and maps remain administrator-managed.
+
+### 3.2. Understand the two independent grants
+
+**Grant A — submit and monitor in `openshift-mtv`.** [ops-migration-rbac.yaml](manifests/ops-migration-rbac.yaml) creates Role `ops-migration-starter` and a same-named RoleBinding:
+
+- `get` on the named Plan lets the operator review `windows-test-perms`.
+- `create` on Migration objects is the action that starts the prepared plan; editing or recreating the Plan is not required.
+- `get`, `list`, and `watch` on Migration objects allow status monitoring. These are convenience/observability permissions, separate from submission.
+- The RoleBinding connects this Role to Group `ops` in this namespace only.
+
+**Grant B — satisfy target authorization in `virt-windows`.** [ops-migration-target-rbac.yaml](manifests/ops-migration-target-rbac.yaml) creates Role `ops-migration-target` and its RoleBinding:
+
+- The only rule is `create` on `virtualmachines` in API group `kubevirt.io`.
+- MTV's Migration admission webhook checks whether the requesting user can create VMs in the plan's target namespace. Without this grant, Migration creation is rejected even though Grant A allows the API request.
+- Binding this Role in `openshift-mtv` would not satisfy a check in `virt-windows`. The Role and RoleBinding must be in the destination namespace.
+
+These are namespace-scoped **Roles**, not ClusterRoles. Each RoleBinding has `subjects.kind: Group`, `subjects.name: ops`, and `roleRef.kind: Role`. `roleRef.name` must match the Role in that RoleBinding's namespace.
+
+### 3.3. Apply the manifests as administrator
+
+```bash
+# Inspect exactly what will be granted.
+cat manifests/ops-migration-rbac.yaml
+cat manifests/ops-migration-target-rbac.yaml
+
+# Apply only the RBAC files, not the whole manifests directory.
 oc apply -f manifests/ops-migration-rbac.yaml
 oc apply -f manifests/ops-migration-target-rbac.yaml
+
+# Read back rules and group subjects.
+oc get role ops-migration-starter -n openshift-mtv -o yaml
+oc get rolebinding ops-migration-starter -n openshift-mtv -o yaml
+oc get role ops-migration-target -n virt-windows -o yaml
+oc get rolebinding ops-migration-target -n virt-windows -o yaml
 ```
+
+Each file contains two YAML documents separated by `---`: a Role and its RoleBinding. Applying the same files again reconciles those objects; it does not create another grant. Expected object names are `role/ops-migration-starter`, `rolebinding/ops-migration-starter`, `role/ops-migration-target`, and `rolebinding/ops-migration-target`.
+
+### 3.4. Check effective access as the actual operator
+
+```bash
+oc --kubeconfig=operator.kubeconfig whoami
+# operator
+oc --kubeconfig=operator.kubeconfig auth can-i get \
+  plans.forklift.konveyor.io/windows-test-perms -n openshift-mtv
+# yes
+oc --kubeconfig=operator.kubeconfig auth can-i create \
+  migrations.forklift.konveyor.io -n openshift-mtv
+# yes
+oc --kubeconfig=operator.kubeconfig auth can-i list \
+  migrations.forklift.konveyor.io -n openshift-mtv
+# yes
+oc --kubeconfig=operator.kubeconfig auth can-i watch \
+  migrations.forklift.konveyor.io -n openshift-mtv
+# yes
+oc --kubeconfig=operator.kubeconfig auth can-i create \
+  virtualmachines.kubevirt.io -n virt-windows
+# yes
+
+# These operations are deliberately not granted by these manifests.
+oc --kubeconfig=operator.kubeconfig auth can-i get secrets -n openshift-mtv
+# no
+oc --kubeconfig=operator.kubeconfig auth can-i patch \
+  plans.forklift.konveyor.io/windows-test-perms -n openshift-mtv
+# no
+oc --kubeconfig=operator.kubeconfig auth can-i create pods -n virt-windows
+# no
+```
+
+The comments describe expected access for an otherwise unprivileged operator. RBAC permissions are additive: unrelated bindings can make a negative check return `yes`. A `no` result normally exits nonzero; this is expected, not a command failure to fix with broader grants.
+
+`auth can-i` checks authorization only. Continue to Step 4's **server-side dry run**, which also exercises MTV admission without creating a persistent Migration or powering off a VM.
+
+### 3.5. Permission summary and security boundaries
 
 | Namespace | Role / RoleBinding | Resources | Verbs | Purpose |
 |---|---|---|---|---|
@@ -87,6 +172,24 @@ oc apply -f manifests/ops-migration-target-rbac.yaml
 Both RoleBindings target Group `ops`. No cluster-admin, namespace edit/admin, provider-secret access, target pod/PVC creation or SCC grant was added. The controller performs migration work with its own credentials.
 
 **Important scope limitation:** Kubernetes RBAC cannot restrict `create migrations` by `spec.plan.name` or by `resourceNames`. This grant can submit migrations for other plans in `openshift-mtv` where admission checks permit them. `get` on the plan is name-restricted, but that does not restrict migration submission. Strict single-plan enforcement requires an additional admission policy or namespace isolation. Target `create virtualmachines` also permits direct VM creation in `virt-windows`. Monitoring grants expose other Migration objects in `openshift-mtv`. These are not single-plan-only permissions.
+
+### 3.6. Diagnose a failed access check
+
+- **Migration create says `no`:** check that `operator` is in Group `ops`, the starter RoleBinding is in `openshift-mtv`, and its `roleRef` names `ops-migration-starter`.
+- **Dry run says the user cannot create `virtualmachines`:** check the plan's actual `spec.targetNamespace` and apply/bind the target Role in that namespace. Do not fix this with `cluster-admin`.
+- **Named plan read fails but migration create works:** inspect the starter Role's `resourceNames`. This example grants `get` for `windows-test-perms`, not `list plans` or access to every plan.
+- **`oc get pods`, VM reads, or logs are forbidden for operator:** expected with this start-and-monitor profile. Use administrator credentials for workload diagnostics; additional read/log permissions are a separate requirement.
+- **Console navigation is incomplete:** this API-focused profile does not promise console inventory browsing, provider editing, map editing, or VM management. Do not treat console requirements as proof that API migration submission needs namespace `edit`.
+
+To revoke these particular grants, an administrator can delete the two RoleBindings:
+
+```bash
+oc delete rolebinding ops-migration-starter -n openshift-mtv
+oc delete rolebinding ops-migration-target -n virt-windows
+```
+
+Revocation does not cancel an already-submitted migration: the controller continues under its own service account. Other RoleBindings, if present, can still grant access.
+
 
 ## 4. Verify admission without starting a migration
 
