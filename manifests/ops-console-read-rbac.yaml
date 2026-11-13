@@ -1,0 +1,115 @@
+# Console read grants for Group ops.
+#
+# The OpenShift console sets up websocket watch connections for resources
+# across multiple namespaces (kubevirt plugin, console config, marketplace,
+# etc.). Without read access, these watches fail with 403 and the console
+# UI hangs indefinitely before rendering any plugin section, including the
+# forklift migration plan list.
+#
+# These grants are read-only and scoped to the specific resources the
+# console plugins watch. They do not grant write access or access to other
+# resources in these namespaces.
+
+# --- openshift-cnv: kubevirt console plugin watches ---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ops-console-read
+  namespace: openshift-cnv
+rules:
+- apiGroups: [kubevirt.io]
+  resources: [kubevirts]
+  verbs: [get, list, watch]
+- apiGroups: [""]
+  resources: [configmaps]
+  resourceNames: [kubevirt-ui-features, kubevirt-user-settings]
+  verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ops-console-read
+  namespace: openshift-cnv
+subjects:
+- kind: Group
+  apiGroup: rbac.authorization.k8s.io
+  name: ops
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: ops-console-read
+
+# --- openshift-console: console config watch ---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ops-console-read
+  namespace: openshift-console
+rules:
+- apiGroups: [""]
+  resources: [configmaps]
+  resourceNames: [console-config]
+  verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ops-console-read
+  namespace: openshift-console
+subjects:
+- kind: Group
+  apiGroup: rbac.authorization.k8s.io
+  name: ops
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: ops-console-read
+
+# --- openshift-marketplace: lightspeed plugin reads packagemanifests ---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ops-console-read
+  namespace: openshift-marketplace
+rules:
+- apiGroups: [packages.operators.coreos.com]
+  resources: [packagemanifests]
+  verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ops-console-read
+  namespace: openshift-marketplace
+subjects:
+- kind: Group
+  apiGroup: rbac.authorization.k8s.io
+  name: ops
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: ops-console-read
+
+# --- Cluster-scoped: console watches the user's own User object ---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ops-console-user-read
+rules:
+- apiGroups: [user.openshift.io]
+  resources: [users]
+  resourceNames: ["~"]
+  verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ops-console-user-read
+subjects:
+- kind: Group
+  apiGroup: rbac.authorization.k8s.io
+  name: ops
+roleRef:
+  kind: ClusterRole
+  apiGroup: rbac.authorization.k8s.io
+  name: ops-console-user-read

@@ -194,6 +194,26 @@ All RoleBindings target Group `ops`. No cluster-admin, namespace edit/admin, pro
 
 The forklift console plugin proxies API calls to `forklift-api` and `forklift-inventory` using the **user's** OAuth token (`authorization: UserToken`). The backend services then query K8s on behalf of the user, so the user needs read access to the resources the backend fetches: plans, providers, storagemaps, networkmaps, hosts, conversions, storageclasses, and NADs. Without these, the console plan section hangs indefinitely while waiting on forbidden API responses.
 
+#### Console plugin watch grants
+
+The OpenShift console sets up websocket watch connections for resources across multiple namespaces (kubevirt plugin, console config, marketplace, user settings). Without read access to these, the watches fail with 403 and the **entire console UI hangs** before rendering any plugin section, including the forklift plan list. The forklift-inventory backend returns 200s regardless — the hang is caused by other plugins' failed watches blocking the React app.
+
+[ops-console-read-rbac.yaml](manifests/ops-console-read-rbac.yaml) grants minimal read access to silence these 403s:
+
+| Namespace | Resources | Verbs | Why |
+|---|---|---|---|
+| openshift-cnv | kubevirts (kubevirt.io) | get, list, watch | Kubevirt console plugin watches cluster kubevirt config |
+| openshift-cnv | configmaps: kubevirt-ui-features, kubevirt-user-settings | get, list, watch | Kubevirt console plugin reads UI feature flags |
+| openshift-console | configmaps: console-config | get, list, watch | Console watches its own config for theme/plugin updates |
+| openshift-marketplace | packagemanifests (packages.operators.coreos.com) | get, list | Lightspeed plugin reads operator package info |
+| cluster (user.openshift.io) | users, resourceNames: ~ | get, list, watch | Console watches the logged-in user's own User object |
+
+All grants are read-only and scoped to the specific resources the console plugins watch. They do not grant write access or access to other resources in these namespaces. Apply with:
+
+```bash
+oc apply -f manifests/ops-console-read-rbac.yaml
+```
+
 **Important scope limitation:** Kubernetes RBAC cannot restrict `create migrations` by `spec.plan.name` or by `resourceNames`. This grant can submit migrations for any plan in `openshift-mtv` where admission checks permit them. Target `create virtualmachines` also permits direct VM creation in the granted namespaces. Monitoring grants expose all Migration objects in `openshift-mtv`. These are not single-plan-only permissions.
 
 ### 3.6. Diagnose a failed access check
