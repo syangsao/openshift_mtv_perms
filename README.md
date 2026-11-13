@@ -15,7 +15,7 @@ flowchart TD
     F --> G["Validate guest<br/>or inspect failure logs"]
 ```
 
-This diagram uses the all-plans option in Step 3.7. Access remains namespace-scoped; each approved destination needs its own VM-creation grant.
+This diagram uses the all-plans option in Step 3.7. Write access (Migration create, VM create) remains namespace-scoped; each approved destination needs its own VM-creation grant. Read access to forklift resources is cluster-wide so the console's all-namespaces plan list works.
 
 ## 1. Configure HTPasswd authentication
 
