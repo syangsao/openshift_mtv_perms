@@ -113,3 +113,30 @@ roleRef:
   kind: ClusterRole
   apiGroup: rbac.authorization.k8s.io
   name: ops-console-user-read
+
+# --- Cluster-scoped: console all-namespaces resource list view ---
+# The OpenShift console's resource list page (e.g. /k8s/all-namespaces/forklift.konveyor.io~v1beta1~Plan)
+# lists objects across ALL namespaces, not just openshift-mtv. A namespace-scoped Role in
+# openshift-mtv does not cover this. Without cluster-wide list/watch on forklift resources,
+# the plan list page hangs indefinitely.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ops-mtv-cross-ns-read
+rules:
+- apiGroups: [forklift.konveyor.io]
+  resources: [plans, migrations, providers, storagemaps, networkmaps, hosts, conversions]
+  verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ops-mtv-cross-ns-read
+subjects:
+- kind: Group
+  apiGroup: rbac.authorization.k8s.io
+  name: ops
+roleRef:
+  kind: ClusterRole
+  apiGroup: rbac.authorization.k8s.io
+  name: ops-mtv-cross-ns-read

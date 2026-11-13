@@ -207,8 +207,9 @@ The OpenShift console sets up websocket watch connections for resources across m
 | openshift-console | configmaps: console-config | get, list, watch | Console watches its own config for theme/plugin updates |
 | openshift-marketplace | packagemanifests (packages.operators.coreos.com) | get, list | Lightspeed plugin reads operator package info |
 | cluster (user.openshift.io) | users, resourceNames: ~ | get, list, watch | Console watches the logged-in user's own User object |
+| cluster (forklift.konveyor.io) | plans, migrations, providers, storagemaps, networkmaps, hosts, conversions | get, list, watch | Console all-namespaces resource list view lists across ALL namespaces, not just openshift-mtv |
 
-All grants are read-only and scoped to the specific resources the console plugins watch. They do not grant write access or access to other resources in these namespaces. Apply with:
+All grants are read-only. The namespace-scoped roles are limited to specific resources; the cluster roles grant cross-namespace read on forklift resources (needed by the console's all-namespaces list view) and self-user watch. Apply with:
 
 ```bash
 oc apply -f manifests/ops-console-read-rbac.yaml
