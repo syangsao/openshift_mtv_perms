@@ -112,11 +112,12 @@ The namespaces and existing plan must already exist. If adapting this example, u
 - `get`, `list`, and `watch` on Migration objects allow status monitoring. These are convenience/observability permissions, separate from submission.
 - The RoleBinding connects this Role to Group `ops` in this namespace only.
 
-**Grant B — satisfy target authorization in `virt-windows`.** [ops-migration-target-rbac.yaml](manifests/ops-migration-target-rbac.yaml) creates Role `ops-migration-target` and its RoleBinding:
+**Grant B — target authorization and migration observability in `virt-windows`.** [ops-migration-target-rbac.yaml](manifests/ops-migration-target-rbac.yaml) creates Role `ops-migration-target` and its RoleBinding:
 
-- The only rule is `create` on `virtualmachines` in API group `kubevirt.io`.
-- MTV's Migration admission webhook checks whether the requesting user can create VMs in the plan's target namespace. Without this grant, Migration creation is rejected even though Grant A allows the API request.
-- Binding this Role in `openshift-mtv` would not satisfy a check in `virt-windows`. The Role and RoleBinding must be in the destination namespace.
+- `create` on `virtualmachines` in API group `kubevirt.io`. MTV's Migration admission webhook checks whether the requesting user can create VMs in the plan's target namespace. Without this grant, Migration creation is rejected even though Grant A allows the API request.
+- `get, list, watch` on `pods` and `get` on `pods/log` let the operator view migration conversion pods and their logs in the console. The migration controller creates virt-v2v and VDDK validator pods in the target namespace; without pod read access the console migration detail page cannot display progress or logs.
+- `get, list, watch` on `persistentvolumeclaims` lets the operator see disk allocation status for migrated VMs.
+- Binding this Role in `openshift-mtv` would not satisfy a check in `virt-windows`. The Role and RoleBinding must be in the destination namespace. Repeat for each approved target namespace (e.g. `virt-linux`).
 
 These are namespace-scoped **Roles**, not ClusterRoles. Each RoleBinding has `subjects.kind: Group`, `subjects.name: ops`, and `roleRef.kind: Role`. `roleRef.name` must match the Role in that RoleBinding's namespace.
 
@@ -188,9 +189,11 @@ The table below reflects the **all-plans** variant (Step 3.7), which is applied 
 | openshift-mtv | ops-migration-starter | storageclasses (storage.k8s.io) | get, list | Console plugin reads storage class info |
 | openshift-mtv | ops-migration-starter | network-attachment-definitions (k8s.cni.cncf.io) | get, list | Console plugin reads NAD info |
 | virt-windows | ops-migration-target | virtualmachines.kubevirt.io | create | Pass MTV admission (windows-test-perms, windows11-test) |
+| virt-windows | ops-migration-target | pods, pods/log, persistentvolumeclaims | get, list, watch / get | View migration pods, logs, and disk status |
 | virt-linux | ops-migration-target | virtualmachines.kubevirt.io | create | Pass MTV admission (vader-test) |
+| virt-linux | ops-migration-target | pods, pods/log, persistentvolumeclaims | get, list, watch / get | View migration pods, logs, and disk status |
 
-All RoleBindings target Group `ops`. No cluster-admin, namespace edit/admin, provider-secret access, target pod/PVC creation or SCC grant was added. The controller performs migration work with its own credentials.
+All RoleBindings target Group `ops`. No cluster-admin, namespace edit/admin, provider-secret access, or SCC grant was added. The controller performs migration work with its own credentials. Pod/PVC read in target namespaces is for observability only — the operator cannot create, delete, or modify pods or PVCs.
 
 The forklift console plugin proxies API calls to `forklift-api` and `forklift-inventory` using the **user's** OAuth token (`authorization: UserToken`). The backend services then query K8s on behalf of the user, so the user needs read access to the resources the backend fetches: plans, providers, storagemaps, networkmaps, hosts, conversions, storageclasses, and NADs. Without these, the console plan section hangs indefinitely while waiting on forbidden API responses.
 
