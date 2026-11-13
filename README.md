@@ -184,10 +184,15 @@ The table below reflects the **all-plans** variant (Step 3.7), which is applied 
 | openshift-mtv | ops-migration-starter | plans.forklift.konveyor.io | get, list, watch | Read all plans |
 | openshift-mtv | ops-migration-starter | migrations.forklift.konveyor.io | create | Submit migration |
 | openshift-mtv | ops-migration-starter | migrations.forklift.konveyor.io | get, list, watch | Monitor migrations |
+| openshift-mtv | ops-migration-starter | providers, storagemaps, hosts, networkmaps, conversions (forklift.konveyor.io) | get, list | Console plugin reads plan-related objects via forklift-api proxy |
+| openshift-mtv | ops-migration-starter | storageclasses (storage.k8s.io) | get, list | Console plugin reads storage class info |
+| openshift-mtv | ops-migration-starter | network-attachment-definitions (k8s.cni.cncf.io) | get, list | Console plugin reads NAD info |
 | virt-windows | ops-migration-target | virtualmachines.kubevirt.io | create | Pass MTV admission (windows-test-perms, windows11-test) |
 | virt-linux | ops-migration-target | virtualmachines.kubevirt.io | create | Pass MTV admission (vader-test) |
 
 All RoleBindings target Group `ops`. No cluster-admin, namespace edit/admin, provider-secret access, target pod/PVC creation or SCC grant was added. The controller performs migration work with its own credentials.
+
+The forklift console plugin proxies API calls to `forklift-api` and `forklift-inventory` using the **user's** OAuth token (`authorization: UserToken`). The backend services then query K8s on behalf of the user, so the user needs read access to the resources the backend fetches: plans, providers, storagemaps, networkmaps, hosts, conversions, storageclasses, and NADs. Without these, the console plan section hangs indefinitely while waiting on forbidden API responses.
 
 **Important scope limitation:** Kubernetes RBAC cannot restrict `create migrations` by `spec.plan.name` or by `resourceNames`. This grant can submit migrations for any plan in `openshift-mtv` where admission checks permit them. Target `create virtualmachines` also permits direct VM creation in the granted namespaces. Monitoring grants expose all Migration objects in `openshift-mtv`. These are not single-plan-only permissions.
 
@@ -290,12 +295,14 @@ oc apply -f manifests/ops-migration-rbac.yaml
 
 This restores the original Plan `resourceNames` restriction and removes Plan `list/watch` from this Role. It does not restrict Migration `create` to one plan, and it does not revoke target RoleBindings added in other namespaces; delete those bindings separately if no longer approved. Do not apply both starter variants together: whichever is applied last defines the shared Role's rules.
 
-This alternative **is applied to the live cluster** (luke, 2026-11-13). The starter Role in `openshift-mtv` grants `get, list, watch` on all Plans and `create, get, list, watch` on Migrations. Target grants exist in both approved destination namespaces:
+This alternative **is applied to the live cluster** (luke, 2026-11-13). The starter Role in `openshift-mtv` grants `get, list, watch` on all Plans, `create, get, list, watch` on Migrations, and `get, list` on plan-related objects (providers, storagemaps, hosts, networkmaps, conversions, storageclasses, NADs) needed by the console plugin. Target grants exist in both approved destination namespaces:
 
 | Namespace | Role / RoleBinding | Resources | Verbs | Purpose |
 |---|---|---|---|---|
 | openshift-mtv | ops-migration-starter | plans.forklift.konveyor.io | get, list, watch | Read all plans |
 | openshift-mtv | ops-migration-starter | migrations.forklift.konveyor.io | create, get, list, watch | Submit and monitor migrations |
+| openshift-mtv | ops-migration-starter | providers, storagemaps, hosts, networkmaps, conversions | get, list | Console plugin reads via forklift-api proxy |
+| openshift-mtv | ops-migration-starter | storageclasses, network-attachment-definitions | get, list | Console plugin reads storage/network info |
 | virt-windows | ops-migration-target | virtualmachines.kubevirt.io | create | Pass MTV admission for windows-test-perms, windows11-test |
 | virt-linux | ops-migration-target | virtualmachines.kubevirt.io | create | Pass MTV admission for vader-test |
 

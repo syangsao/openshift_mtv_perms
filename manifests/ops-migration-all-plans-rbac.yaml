@@ -10,6 +10,15 @@ rules:
 - apiGroups: [forklift.konveyor.io]
   resources: [migrations]
   verbs: [create, get, list, watch]
+- apiGroups: [forklift.konveyor.io]
+  resources: [providers, storagemaps, hosts, networkmaps, conversions]
+  verbs: [get, list]
+- apiGroups: [storage.k8s.io]
+  resources: [storageclasses]
+  verbs: [get, list]
+- apiGroups: [k8s.cni.cncf.io]
+  resources: [network-attachment-definitions]
+  verbs: [get, list]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
