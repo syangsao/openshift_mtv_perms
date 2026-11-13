@@ -2,6 +2,37 @@
 
 Verified on luke, MTV 2.12.10, 2026-11-12. Plan: `openshift-mtv/windows-test-perms`; destination: `virt-windows`; source VM: `Windows2025` (`vm-46004`). This procedure starts an existing, administrator-prepared plan via the Kubernetes API, not the console plan editor.
 
+## Process flow
+
+```mermaid
+flowchart TD
+    A[Admin creates HTPasswd entry for operator] --> B[Store password file in openshift-config Secret]
+    B --> C[Configure OAuth HTPasswd identity provider]
+    C --> D[operator authenticates]
+    D --> E[Admin adds operator to ops group]
+
+    E --> F[Bind all-plans starter Role to ops in openshift-mtv]
+    F --> G[Allow Plan get/list/watch and Migration create/get/list/watch]
+    G --> H[Bind target Role to ops in each approved destination]
+    H --> I[Allow virtualmachines create in those destinations]
+
+    I --> J[operator selects a prepared migration plan]
+    J --> K[Submit Migration with server-side dry run]
+    K --> L{Authorization and MTV admission pass?}
+    L -->|No| M[Check group membership, plan namespace, and target grant]
+    M --> K
+    L -->|Yes| N[operator creates real Migration]
+    N --> O[MTV controller executes migration using its service account]
+    O --> P[Convert and copy disks]
+    P --> Q[Create destination VM and complete guest reboot steps]
+    Q --> R[operator monitors Migration status]
+    R --> S{Migration outcome}
+    S -->|Succeeded| T[Validate migrated guest]
+    S -->|Failed| U[Admin inspects workload events and logs]
+```
+
+This diagram uses the all-plans option in Step 3.7. Access remains namespace-scoped; each approved destination needs its own VM-creation grant.
+
 ## 1. Configure HTPasswd authentication
 
 Follow [Red Hat's OpenShift 4.22 HTPasswd procedure](https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/authentication_and_authorization/configuring-identity-providers#identity-provider-htpasswd-about_configuring-htpasswd-identity-provider). Red Hat recommends this only for development, not production.
