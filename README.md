@@ -6,29 +6,13 @@ Verified on luke, MTV 2.12.10, 2026-11-12. Plan: `openshift-mtv/windows-test-per
 
 ```mermaid
 flowchart TD
-    A[Admin creates HTPasswd entry for operator] --> B[Store password file in openshift-config Secret]
-    B --> C[Configure OAuth HTPasswd identity provider]
-    C --> D[operator authenticates]
-    D --> E[Admin adds operator to ops group]
-
-    E --> F[Bind all-plans starter Role to ops in openshift-mtv]
-    F --> G[Allow Plan get/list/watch and Migration create/get/list/watch]
-    G --> H[Bind target Role to ops in each approved destination]
-    H --> I[Allow virtualmachines create in those destinations]
-
-    I --> J[operator selects a prepared migration plan]
-    J --> K[Submit Migration with server-side dry run]
-    K --> L{Authorization and MTV admission pass?}
-    L -->|No| M[Check group membership, plan namespace, and target grant]
-    M --> K
-    L -->|Yes| N[operator creates real Migration]
-    N --> O[MTV controller executes migration using its service account]
-    O --> P[Convert and copy disks]
-    P --> Q[Create destination VM and complete guest reboot steps]
-    Q --> R[operator monitors Migration status]
-    R --> S{Migration outcome}
-    S -->|Succeeded| T[Validate migrated guest]
-    S -->|Failed| U[Admin inspects workload events and logs]
+    A["Configure HTPasswd + OAuth<br/>Add operator to ops"] --> B["Bind ops Roles<br/>Plan namespace + approved targets"]
+    B --> C["operator selects plan<br/>Server-side dry run"]
+    C --> D{Admission passes?}
+    D -->|No| B
+    D -->|Yes| E["operator creates Migration"]
+    E --> F["MTV controller migrates VM<br/>operator monitors status"]
+    F --> G["Validate guest<br/>or inspect failure logs"]
 ```
 
 This diagram uses the all-plans option in Step 3.7. Access remains namespace-scoped; each approved destination needs its own VM-creation grant.
