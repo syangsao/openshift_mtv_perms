@@ -177,39 +177,43 @@ The comments describe expected access for an otherwise unprivileged operator. RB
 
 ### 3.5. Permission summary and security boundaries
 
+The table below reflects the **all-plans** variant (Step 3.7), which is applied on luke. The single-plan variant restricts the first row to `resourceNames: windows-test-perms` and drops `list, watch`.
+
 | Namespace | Role / RoleBinding | Resources | Verbs | Purpose |
 |---|---|---|---|---|
-| openshift-mtv | ops-migration-starter | plans.forklift.konveyor.io, resourceNames: windows-test-perms | get | Read the prepared plan |
+| openshift-mtv | ops-migration-starter | plans.forklift.konveyor.io | get, list, watch | Read all plans |
 | openshift-mtv | ops-migration-starter | migrations.forklift.konveyor.io | create | Submit migration |
 | openshift-mtv | ops-migration-starter | migrations.forklift.konveyor.io | get, list, watch | Monitor migrations |
-| virt-windows | ops-migration-target | virtualmachines.kubevirt.io | create | Pass MTV migration admission authorization |
+| virt-windows | ops-migration-target | virtualmachines.kubevirt.io | create | Pass MTV admission (windows-test-perms, windows11-test) |
+| virt-linux | ops-migration-target | virtualmachines.kubevirt.io | create | Pass MTV admission (vader-test) |
 
-Both RoleBindings target Group `ops`. No cluster-admin, namespace edit/admin, provider-secret access, target pod/PVC creation or SCC grant was added. The controller performs migration work with its own credentials.
+All RoleBindings target Group `ops`. No cluster-admin, namespace edit/admin, provider-secret access, target pod/PVC creation or SCC grant was added. The controller performs migration work with its own credentials.
 
-**Important scope limitation:** Kubernetes RBAC cannot restrict `create migrations` by `spec.plan.name` or by `resourceNames`. This grant can submit migrations for other plans in `openshift-mtv` where admission checks permit them. `get` on the plan is name-restricted, but that does not restrict migration submission. Strict single-plan enforcement requires an additional admission policy or namespace isolation. Target `create virtualmachines` also permits direct VM creation in `virt-windows`. Monitoring grants expose other Migration objects in `openshift-mtv`. These are not single-plan-only permissions.
+**Important scope limitation:** Kubernetes RBAC cannot restrict `create migrations` by `spec.plan.name` or by `resourceNames`. This grant can submit migrations for any plan in `openshift-mtv` where admission checks permit them. Target `create virtualmachines` also permits direct VM creation in the granted namespaces. Monitoring grants expose all Migration objects in `openshift-mtv`. These are not single-plan-only permissions.
 
 ### 3.6. Diagnose a failed access check
 
 - **Migration create says `no`:** check that `operator` is in Group `ops`, the starter RoleBinding is in `openshift-mtv`, and its `roleRef` names `ops-migration-starter`.
 - **Dry run says the user cannot create `virtualmachines`:** check the plan's actual `spec.targetNamespace` and apply/bind the target Role in that namespace. Do not fix this with `cluster-admin`.
-- **Named plan read fails but migration create works:** inspect the starter Role's `resourceNames`. This example grants `get` for `windows-test-perms`, not `list plans` or access to every plan.
+- **Plan read fails but migration create works (single-plan variant):** inspect the starter Role's `resourceNames`. The single-plan manifest grants `get` only for `windows-test-perms`. The all-plans variant (applied on luke) grants `get, list, watch` on all plans.
 - **`oc get pods`, VM reads, or logs are forbidden for operator:** expected with this start-and-monitor profile. Use administrator credentials for workload diagnostics; additional read/log permissions are a separate requirement.
 - **Console navigation is incomplete:** this API-focused profile does not promise console inventory browsing, provider editing, map editing, or VM management. Do not treat console requirements as proof that API migration submission needs namespace `edit`.
 
-To revoke these particular grants, an administrator can delete the two RoleBindings:
+To revoke these particular grants, an administrator can delete the RoleBindings:
 
 ```bash
 oc delete rolebinding ops-migration-starter -n openshift-mtv
 oc delete rolebinding ops-migration-target -n virt-windows
+oc delete rolebinding ops-migration-target -n virt-linux
 ```
 
 Revocation does not cancel an already-submitted migration: the controller continues under its own service account. Other RoleBindings, if present, can still grant access.
 
-### 3.7. Alternative: access to all migration plans
+### 3.7. Access to all migration plans (applied)
 
-**Scope:** all existing and future Plans in `openshift-mtv`, not every namespace in the cluster. This remains a start-and-monitor profile; it does not grant Plan creation, editing, deletion, or provider-secret access.
+**Scope:** all existing and future Plans in `openshift-mtv`, not every namespace in the cluster. This remains a start-and-monitor profile; it does not grant Plan creation, editing, deletion, or provider-secret access. **This variant is applied on luke** (2026-11-13); the single-plan starter manifest in Step 3.3 is superseded.
 
-Use [ops-migration-all-plans-rbac.yaml](manifests/ops-migration-all-plans-rbac.yaml) **instead of** the single-plan starter manifest in Step 3.3:
+Apply [ops-migration-all-plans-rbac.yaml](manifests/ops-migration-all-plans-rbac.yaml) **instead of** the single-plan starter manifest in Step 3.3:
 
 ```bash
 # Administrator: replace the existing starter Role's rules.
@@ -286,7 +290,16 @@ oc apply -f manifests/ops-migration-rbac.yaml
 
 This restores the original Plan `resourceNames` restriction and removes Plan `list/watch` from this Role. It does not restrict Migration `create` to one plan, and it does not revoke target RoleBindings added in other namespaces; delete those bindings separately if no longer approved. Do not apply both starter variants together: whichever is applied last defines the shared Role's rules.
 
-This alternative is documented and its manifest is validated without persistence; it was **not applied to the live cluster** as part of this documentation update.
+This alternative **is applied to the live cluster** (luke, 2026-11-13). The starter Role in `openshift-mtv` grants `get, list, watch` on all Plans and `create, get, list, watch` on Migrations. Target grants exist in both approved destination namespaces:
+
+| Namespace | Role / RoleBinding | Resources | Verbs | Purpose |
+|---|---|---|---|---|
+| openshift-mtv | ops-migration-starter | plans.forklift.konveyor.io | get, list, watch | Read all plans |
+| openshift-mtv | ops-migration-starter | migrations.forklift.konveyor.io | create, get, list, watch | Submit and monitor migrations |
+| virt-windows | ops-migration-target | virtualmachines.kubevirt.io | create | Pass MTV admission for windows-test-perms, windows11-test |
+| virt-linux | ops-migration-target | virtualmachines.kubevirt.io | create | Pass MTV admission for vader-test |
+
+Both target RoleBindings target Group `ops`. A new destination namespace requires its own target grant before migrations targeting it will pass admission.
 
 
 
